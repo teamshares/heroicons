@@ -93,7 +93,7 @@ async function buildIcons(package, style, format) {
       let content = await transform[package](svg, componentName, format)
       let types =
         package === 'react'
-          ? `import * as React from 'react';\ndeclare function ${componentName}(props: React.ComponentProps<'svg'> & { title?: string, titleId?: string }): JSX.Element;\nexport default ${componentName};\n`
+          ? `import * as React from 'react';\ndeclare const ${componentName}: React.ForwardRefExoticComponent<React.SVGProps<SVGSVGElement> & { title?: string, titleId?: string }>;\nexport default ${componentName};\n`
           : `import type { FunctionalComponent, HTMLAttributes, VNodeProps } from 'vue';\ndeclare const ${componentName}: FunctionalComponent<HTMLAttributes & VNodeProps>;\nexport default ${componentName};\n`
 
       return [
@@ -106,6 +106,56 @@ async function buildIcons(package, style, format) {
   await ensureWrite(`${outDir}/index.js`, exportAll(icons, format))
 
   await ensureWrite(`${outDir}/index.d.ts`, exportAll(icons, 'esm', false))
+}
+
+/**
+ * @param {string[]} styles
+ */
+async function buildExports(styles) {
+  let pkg = {}
+
+  // For those that want to read the version from package.json
+  pkg[`./package.json`] = { "default": "./package.json" }
+
+  // Backwards compatibility with v1 imports (points to proxy that prints an error message):
+  pkg["./outline"] = { "default": "./outline/index.js" }
+  pkg["./outline/index"] = { "default": "./outline/index.js" }
+  pkg["./outline/index.js"] = { "default": "./outline/index.js" }
+  pkg["./solid"] = { "default": "./solid/index.js" }
+  pkg["./solid/index"] = { "default": "./solid/index.js" }
+  pkg["./solid/index.js"] = { "default": "./solid/index.js" }
+
+  // Explicit exports for each style:
+  for (let style of styles) {
+    pkg[`./${style}`] = {
+      "types": `./${style}/index.d.ts`,
+      "import": `./${style}/index.js`,
+      "require": `./${style}/index.js`
+    }
+    pkg[`./${style}/*`] = {
+      "types": `./${style}/*.d.ts`,
+      "import": `./${style}/esm/*.js`,
+      "require": `./${style}/*.js`
+    }
+    pkg[`./${style}/*.js`] = {
+      "types": `./${style}/*.d.ts`,
+      "import": `./${style}/esm/*.js`,
+      "require": `./${style}/*.js`
+    }
+
+    // This dir is basically an implementation detail, but it's needed for
+    // backwards compatibility in case people were importing from it directly.
+    pkg[`./${style}/esm/*`] = {
+      "types": `./${style}/*.d.ts`,
+      "import": `./${style}/esm/*.js`
+    }
+    pkg[`./${style}/esm/*.js`] = {
+      "types": `./${style}/*.d.ts`,
+      "import": `./${style}/esm/*.js`
+    }
+  }
+
+  return pkg
 }
 
 async function main(package) {
@@ -134,6 +184,16 @@ async function main(package) {
     ensureWriteJson(`./${package}/24/solid/esm/package.json`, esmPackageJson),
     ensureWriteJson(`./${package}/24/solid/package.json`, cjsPackageJson),
   ])
+
+  let packageJson = JSON.parse(await fs.readFile(`./${package}/package.json`, 'utf8'))
+
+  packageJson.exports = await buildExports([
+    '20/solid',
+    '24/outline',
+    '24/solid',
+  ])
+
+  await ensureWriteJson(`./${package}/package.json`, packageJson)
 
   return console.log(`Finished building ${package} package.`)
 }
